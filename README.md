@@ -77,3 +77,7 @@ A native browser run verified authenticated tracking and server-side sign-out:
 the same token returned HTTP 401 after signing out.
 [Verification record](docs/native-session-check.json). The backend suite has 93
 tests; the React client currently has no unit test suite.
+
+## Author
+
+[**Muhammad Nadeem**](https://github.com/dev-mnadeem)
