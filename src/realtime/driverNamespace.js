@@ -2,7 +2,7 @@
 
 const driverStore = require('../models/driverStore');
 const logger = require('../utils/logger');
-const { authenticateSocketToken } = require('../utils/auth');
+const { authenticateSocketToken, authoriseToken } = require('../utils/auth');
 const { recordLocation, markOffline } = require('../services/locationService');
 
 const NAMESPACE = '/driver/update';
@@ -28,6 +28,13 @@ function registerDriverNamespace(io, deps = {}) {
   namespace.use(authenticateSocketToken);
 
   namespace.on('connection', (socket) => {
+    socket.use((_packet, next) => {
+      if (!authoriseToken(socket.token, { store }).ok) {
+        socket.disconnect(true);
+        return next(new Error('Session expired or revoked'));
+      }
+      return next();
+    });
     const { driverId, name: driverName } = socket.user;
 
     // Last connection wins. The id is recorded so a *stale* socket's disconnect

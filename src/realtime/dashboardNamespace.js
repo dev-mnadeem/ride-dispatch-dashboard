@@ -4,6 +4,7 @@ const config = require('../config/config');
 const driverStore = require('../models/driverStore');
 const driverService = require('../services/driverService');
 const logger = require('../utils/logger');
+const { authenticateSocketToken, authoriseToken } = require('../utils/auth');
 const { driverEvents, DriverEvents } = require('./events');
 
 const NAMESPACE = '/dashboard';
@@ -18,7 +19,7 @@ const driverIdFromRoom = (room) =>
 /**
  * Dashboard-facing namespace.
  *
- * Authentication: none (read-only view; see README limitations).
+ * Authentication: active JWT in handshake.auth.token.
  * Inbound : `subscribe`, `unsubscribe`, `get_online_drivers`, `get_driver_info`, `ping`
  * Outbound: `connected`, `online_drivers`, `driver_data`, `driver_offline`,
  *           `OFFLINE_DRIVER`, `driver_connected`, `driver_disconnected`,
@@ -37,10 +38,19 @@ function registerDashboardNamespace(io, deps = {}) {
   const store = deps.store || driverStore;
   const events = deps.events || driverEvents;
   const namespace = io.of(NAMESPACE);
+  namespace.use(authenticateSocketToken);
+
+  function pruneRevokedSessions() {
+    for (const socket of namespace.sockets.values()) {
+      if (!authoriseToken(socket.token, { store }).ok) socket.disconnect(true);
+    }
+  }
+
 
   /* ------------------------ domain events -> sockets ------------------------ */
 
   const onLocationUpdated = (update) => {
+    pruneRevokedSessions();
     namespace.to(roomFor(update.driverId)).emit('driver_data', {
       driverId: update.driverId,
       profile: update.profile,
@@ -51,6 +61,7 @@ function registerDashboardNamespace(io, deps = {}) {
   };
 
   const onCameOnline = (update) => {
+    pruneRevokedSessions();
     namespace.emit('driver_connected', {
       driverId: update.driverId,
       profile: update.profile,
@@ -61,6 +72,7 @@ function registerDashboardNamespace(io, deps = {}) {
   };
 
   const onWentOffline = (payload) => {
+    pruneRevokedSessions();
     namespace.to(roomFor(payload.driverId)).emit('driver_offline', {
       driverId: payload.driverId,
       message: 'Driver is currently offline or no location data available',
@@ -76,6 +88,7 @@ function registerDashboardNamespace(io, deps = {}) {
   events.on(DriverEvents.WENT_OFFLINE, onWentOffline);
 
   function broadcastRoster() {
+    pruneRevokedSessions();
     namespace.emit('online_drivers', driverService.listOnlineDrivers({ store }));
   }
 
@@ -83,6 +96,7 @@ function registerDashboardNamespace(io, deps = {}) {
 
   // One timer for the whole namespace rather than two per connected client.
   const sweepTimer = setInterval(() => {
+    pruneRevokedSessions();
     for (const room of namespace.adapter.rooms.keys()) {
       const driverId = driverIdFromRoom(room);
       if (!driverId || store.isDriverOnline(driverId)) continue;
@@ -101,6 +115,13 @@ function registerDashboardNamespace(io, deps = {}) {
   /* -------------------------------- sockets --------------------------------- */
 
   namespace.on('connection', (socket) => {
+    socket.use((_packet, next) => {
+      if (!authoriseToken(socket.token, { store }).ok) {
+        socket.disconnect(true);
+        return next(new Error('Session expired or revoked'));
+      }
+      return next();
+    });
     logger.info(`Dashboard client connected: ${socket.id}`);
     let subscribedTo = null;
 

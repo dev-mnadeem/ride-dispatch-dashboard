@@ -132,7 +132,7 @@ test('an invalid location_update is answered with an error and stores nothing', 
 });
 
 test('a dashboard client receives the roster on connect', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   const roster = await once(dashboard, 'online_drivers');
 
   assert.deepEqual(roster.drivers, []);
@@ -140,7 +140,7 @@ test('a dashboard client receives the roster on connect', async () => {
 });
 
 test('subscribing to an offline driver yields driver_offline, not driver_data', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
 
   // Both listeners are attached before the emit: the server answers with
@@ -155,7 +155,7 @@ test('subscribing to an offline driver yields driver_offline, not driver_data', 
 });
 
 test('subscribing without a driver id is an error', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
 
   dashboard.emit('subscribe', {});
@@ -163,7 +163,7 @@ test('subscribing without a driver id is an error', async () => {
 });
 
 test("a subscribed dashboard receives the driver's live positions", async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
   dashboard.emit('subscribe', { driverId: 'driver1' });
   await once(dashboard, 'subscribed');
@@ -182,7 +182,7 @@ test("a subscribed dashboard receives the driver's live positions", async () => 
 });
 
 test('a dashboard subscribed to another driver is not sent that traffic', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
   dashboard.emit('subscribe', { driverId: 'driver2' });
   await once(dashboard, 'subscribed');
@@ -203,7 +203,7 @@ test('a dashboard subscribed to another driver is not sent that traffic', async 
 });
 
 test('a driver coming online updates every dashboard roster', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'online_drivers');
 
   const driver = open('/driver/update', { auth: { token: issueToken('driver2') } });
@@ -218,7 +218,7 @@ test('a driver coming online updates every dashboard roster', async () => {
 });
 
 test('a driver disconnecting takes them offline and notifies dashboards', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
 
   const driver = open('/driver/update', { auth: { token: issueToken('driver1') } });
@@ -236,7 +236,7 @@ test('a driver disconnecting takes them offline and notifies dashboards', async 
 });
 
 test('unsubscribing stops the per-driver stream', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
   dashboard.emit('subscribe', { driverId: 'driver1' });
   await once(dashboard, 'subscribed');
@@ -262,7 +262,7 @@ test('get_online_drivers and get_driver_info answer on demand', async () => {
   driver.emit('location_update', { lat: 40.68, lng: -73.94 });
   await once(driver, 'location_updated');
 
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
 
   dashboard.emit('get_online_drivers');
@@ -278,7 +278,7 @@ test('get_online_drivers and get_driver_info answer on demand', async () => {
 });
 
 test('ping is answered with pong on both namespaces', async () => {
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
   dashboard.emit('ping');
   assert.ok(await once(dashboard, 'pong'));
@@ -305,10 +305,46 @@ test('a reconnecting driver is not taken offline by their stale socket', async (
 
   // Closing the *older* connection must not evict the live one. The original
   // handler called removeDriver() unconditionally on every disconnect.
-  const dashboard = open('/dashboard');
+  const dashboard = open('/dashboard', { auth: { token: issueToken('driver1') } });
   await once(dashboard, 'connected');
   first.close();
   await new Promise((resolve) => setTimeout(resolve, 250));
 
   assert.equal(driverStore.isDriverOnline('driver1'), true);
+});
+
+
+test('dashboard rejects missing, forged and revoked credentials', async () => {
+  const revoked = issueToken('driver1');
+  driverStore.removeActiveToken(revoked);
+  for (const token of [undefined, 'forged', revoked]) {
+    const client = open('/dashboard', { auth: { token } });
+    const error = await once(client, 'connect_error');
+    assert.match(error.message, /token/i);
+  }
+});
+
+test('revoked dashboard disconnects before another roster can be read', async () => {
+  const token = issueToken('driver1');
+  const dashboard = open('/dashboard', { auth: { token } });
+  await once(dashboard, 'online_drivers');
+  driverStore.removeActiveToken(token);
+  let received = false;
+  dashboard.on('online_drivers', () => { received = true; });
+  const disconnected = once(dashboard, 'disconnect');
+  dashboard.emit('get_online_drivers');
+  await disconnected;
+  assert.equal(received, false);
+});
+
+
+test('a driver socket cannot publish another location after logout revokes its token', async () => {
+  const token = issueToken('driver2');
+  const driver = open('/driver/update', { auth: { token } });
+  await once(driver, 'connected');
+  driverStore.removeActiveToken(token);
+  const disconnected = once(driver, 'disconnect');
+  driver.emit('location_update', { lat: 40.7, lng: -74 });
+  await disconnected;
+  assert.equal(driverStore.getDriverLocation('driver2'), null);
 });

@@ -1,0 +1,5 @@
+{
+  "data": "Seeded demo drivers and synthetic coordinates",
+  "dashboard": "Authenticated socket connected and displayed subscribed driver location",
+  "logout": "Server revoked token; subsequent profile request returned 401"
+}

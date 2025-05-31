@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import io from 'socket.io-client';
-import { DASHBOARD_NAMESPACE_URL } from '../api/config';
+import { API_BASE_URL, DASHBOARD_NAMESPACE_URL } from '../api/config';
 import './Dashboard.css';
 
 const MAX_NOTIFICATIONS = 5;
@@ -22,7 +22,25 @@ function Dashboard({ user, onLogout }) {
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [lastUpdate, setLastUpdate] = useState(null);
   const [error, setError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
   const [notifications, setNotifications] = useState([]);
+
+  const signOut = async () => {
+    setLoggingOut(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${user.token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) throw new Error('Session revocation failed');
+      socketRef.current?.disconnect();
+      onLogout();
+    } catch {
+      setError('Could not sign out on the server. Please try again.');
+      setLoggingOut(false);
+    }
+  };
 
   const socketRef = useRef(null);
   const notificationTimersRef = useRef(new Map());
@@ -49,7 +67,7 @@ function Dashboard({ user, onLogout }) {
   }, []);
 
   useEffect(() => {
-    const socket = io(DASHBOARD_NAMESPACE_URL, { transports: ['websocket', 'polling'] });
+    const socket = io(DASHBOARD_NAMESPACE_URL, { transports: ['websocket', 'polling'], auth: { token: user.token } });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -119,7 +137,7 @@ function Dashboard({ user, onLogout }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [addNotification]);
+  }, [addNotification, user.token]);
 
   const handleDriverSelection = (driverId) => {
     const socket = socketRef.current;
@@ -149,7 +167,7 @@ function Dashboard({ user, onLogout }) {
               <span className="status-dot" aria-hidden="true" />
               {connectionStatus}
             </div>
-            <button type="button" className="btn btn-danger" onClick={onLogout}>
+            <button type="button" className="btn btn-danger" onClick={signOut} disabled={loggingOut}>
               Sign out
             </button>
           </div>

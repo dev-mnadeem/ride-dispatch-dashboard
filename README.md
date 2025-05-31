@@ -49,5 +49,31 @@ A `Dockerfile` and `docker-compose.yml` are included but haven't been built or r
 ## Limitations
 
 - Restarting the server loses all positions and tokens, and it can only run as a single instance.
-- Credentials are plain text and the `/dashboard` socket has no auth.
+- Seed credentials are plain text fixtures. Every signed-in demo account can monitor every driver; separate dispatcher roles are not implemented.
 - Simulated positions are random points in a New York bounding box, shown as coordinates (no map).
+
+
+## Location stream boundary
+
+```mermaid
+sequenceDiagram
+    participant Driver as Driver client
+    participant Server as Socket.IO server
+    participant Store as In-memory sessions and positions
+    participant Dashboard as Dashboard client
+    Driver->>Server: JWT handshake, then location_update
+    Server->>Store: Check active session and store location
+    Dashboard->>Server: JWT handshake, then subscribe(driverId)
+    Server-->>Dashboard: Driver room updates
+    Note over Server,Store: Revoked sessions are checked before packets and dashboard broadcasts
+```
+
+Both namespaces require an active token. Dashboard broadcasts drop revoked or
+expired sessions before sending location data, and neither namespace accepts a
+new packet from a revoked session. These are integration tests against real
+Socket.IO connections. The in-memory store remains a one-process demo.
+
+A native browser run verified authenticated tracking and server-side sign-out:
+the same token returned HTTP 401 after signing out.
+[Verification record](docs/native-session-check.json). The backend suite has 93
+tests; the React client currently has no unit test suite.
